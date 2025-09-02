@@ -1,0 +1,22 @@
+{
+  "dev": {
+    "app_function": "app.app",
+    "profile_name": null,
+    "project_name": "aws-dolar-zappa",
+    "runtime": "python3.11",
+    "s3_bucket": "zappa-deploy-xxxx", 
+    "timeout_seconds": 30,
+    "memory_size": 128,
+    "environment_variables": {
+      "S3_BUCKET": "dolar_raw_xxxx",
+      "S3_KEY_PREFIX": ""
+    },
+    "events": [
+      {
+        "function": "app.fetch_and_store",
+        "expression": "cron(0 23 * * ? *)"
+      }
+    ]
+  }
+}
+
