@@ -1,0 +1,45 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+*.log
+
+# --- Virtual environments ---
+.venv/
+venv/
+ENV/
+env/
+*.env
+
+# --- Zappa ---
+.zappa/
+zappa_settings.json.bak
+
+# --- AWS credentials ---
+.aws/
+*.pem
+*.key
+
+# --- Editor/IDE ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# --- Test/coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.cache/
+
+# --- Deployment builds ---
+build/
+dist/
+*.tar.gz
+*.whl
