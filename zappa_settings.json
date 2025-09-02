@@ -4,12 +4,12 @@
     "profile_name": null,
     "project_name": "aws-dolar-zappa",
     "runtime": "python3.11",
-    "s3_bucket": "zappa-deploy-xxxx", 
+    "aws_region": "us-east-1",
+    "s3_bucket": "zappa-deploy-xxxx",
     "timeout_seconds": 30,
     "memory_size": 128,
     "environment_variables": {
-      "S3_BUCKET": "dolar_raw_xxxx",
-      "S3_KEY_PREFIX": ""
+      "BUCKET_NAME": "dolar-raw-dev"
     },
     "events": [
       {
@@ -17,6 +17,23 @@
         "expression": "cron(0 23 * * ? *)"
       }
     ]
+  },
+  "prod": {
+    "app_function": "handler.fetch_dolar_data",
+    "project_name": "aws-dolar-zappa",
+    "runtime": "python3.11",
+    "aws_region": "us-east-1",
+    "s3_bucket": "zappa-deploy-1234",
+    "timeout_seconds": 30,
+    "memory_size": 128,
+    "environment_variables": {
+      "BUCKET_NAME": "dolar-raw-5678"
+    },
+    "events": [
+      {
+        "function": "handler.fetch_dolar_data",
+        "expression": "cron(0 23 * * ? *)"
+      }
+    ]
   }
 }
-
