@@ -18,8 +18,8 @@
       "S3_BUCKET": "dolar-raw-dev",
       "DB_HOST": "your-rds-endpoint",
       "DB_PORT": "3306",
-      "DB_USER": "finanzas_user",
-      "DB_PASSWORD": "****",
+      "DB_USER": "admin",
+      "DB_PASSWORD": "admin12345",
       "DB_NAME": "finanzas",
       "DB_TABLE": "dolar"
     },
