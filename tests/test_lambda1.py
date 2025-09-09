@@ -39,4 +39,6 @@ def test_lambda1_saves_file_to_s3(monkeypatch):
 
     # check that file exists in S3
     response = s3.list_objects_v2(Bucket=bucket_name)
-    assert response["KeyCou]()
+    assert response["KeyCount"] == 1
+    key = response["Contents"][0]["Key"]
+    assert key.startswith("dolar-") and key.endswith(".json")
