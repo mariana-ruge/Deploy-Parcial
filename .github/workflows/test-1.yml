@@ -1,0 +1,179 @@
+name: Tests & Deploy via EC2 (Zappa)
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - "v*"
+      - "release-*"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run tests and publish artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-html moto boto3 pymysql requests
+
+      - name: Run tests with report
+        run: |
+          source .venv/bin/activate
+          mkdir -p reports
+          PYTHONPATH=. pytest -v --html=reports/report.html --self-contained-html
+
+      # === Artefactos descargables ===
+      - name: Build ZIP from repo (HEAD)
+        run: |
+          git archive -o build-${{ github.sha }}.zip HEAD
+          echo "Created build-${{ github.sha }}.zip"
+
+      - name: Package test report
+        run: |
+          cp reports/report.html test-report-${{ github.sha }}.html
+          zip -j test-report-${{ github.sha }}.zip reports/report.html
+
+      - name: Upload artifacts (build + reports)
+        uses: actions/upload-artifact@v4
+        with:
+          name: outputs-${{ github.sha }}
+          path: |
+            build-${{ github.sha }}.zip
+            test-report-${{ github.sha }}.html
+            test-report-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      # === (Opcional) Publicar assets en un Release si hay tag ===
+      - name: Publish Release assets (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            build-${{ github.sha }}.zip
+            test-report-${{ github.sha }}.html
+            test-report-${{ github.sha }}.zip
+
+  deploy:
+    name: Deploy on EC2 with Zappa
+    if: github.ref == 'refs/heads/main'
+    needs: [test]
+    runs-on: ubuntu-latest
+
+    env:
+      # Si no defines la variable, usará 'prod'
+      ZAPPA_STAGE: ${{ vars.ZAPPA_STAGE || 'prod' }}
+
+    steps:
+      - name: Checkout (metadata only)
+        uses: actions/checkout@v4
+
+      # --- Diagnóstico de conectividad antes de ssh-keyscan ---
+      - name: Debug EC2 connectivity
+        run: |
+          echo "Resolviendo host..."
+          getent hosts "${{ secrets.EC2_HOST }}" || true
+          echo "Probando ICMP (puede fallar si está bloqueado)..."
+          ping -c 2 "${{ secrets.EC2_HOST }}" || true
+          echo "Probando puerto 22..."
+          timeout 8 bash -lc "echo > /dev/tcp/${{ secrets.EC2_HOST }}/22" \
+            && echo "✅ Port 22 is open" || (echo "❌ Port 22 closed/unreachable" && exit 1)
+
+      # --- Configurar SSH con clave privada desde Secrets ---
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          # Espera hasta 30s por respuesta para poblar known_hosts
+          ssh-keyscan -T 30 -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo '✅ SSH connection works!'"
+
+      # --- Despliegue remoto: git pull por SSH + Zappa desde la EC2 ---
+      - name: Remote deploy (git pull + zappa)
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          PROJECT_DIR: ${{ secrets.EC2_PROJECT_DIR }}     # ej: /opt/myapp
+          REPO_SSH: ${{ secrets.REPO_SSH }}               # ej: git@github.com:owner/repo.git
+          ZAPPA_STAGE: ${{ vars.ZAPPA_STAGE || 'prod' }}
+        run: |
+          ssh -i ~/.ssh/id_rsa "$EC2_USER@$EC2_HOST" <<'EOF'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          set -x
+
+          # ---- Paquetes básicos según distro ----
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y git python3-venv python3-pip
+          elif command -v yum >/dev/null 2>&1; then
+            sudo yum install -y git python3-pip
+            python3 -m pip install --upgrade pip
+          fi
+
+          # ---- Directorio del proyecto ----
+          mkdir -p "$PROJECT_DIR"
+          cd "$PROJECT_DIR"
+
+          # ---- Clonar o actualizar repo por SSH ----
+          if [ ! -d .git ]; then
+            echo "Clonando repo en $PROJECT_DIR ..."
+            git clone "$REPO_SSH" .
+          else
+            echo "Repo existente; actualizando remote origin..."
+            git remote set-url origin "$REPO_SSH"
+          fi
+
+          git fetch origin
+          git checkout main
+          git pull --ff-only origin main
+
+          # ---- Virtualenv + dependencias ----
+          python3 -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+          # Instalar Zappa dentro de la venv
+          python -m pip install "zappa>=0.56"
+
+          # ---- Verificaciones útiles ----
+          python -c "import sys; print(sys.executable)"
+          python -m pip show zappa || true
+          ls -l .venv/bin | grep -i zappa || true
+
+          # ---- Despliegue/Actualización con Zappa (desde la venv) ----
+          if .venv/bin/zappa status "$ZAPPA_STAGE" >/dev/null 2>&1; then
+            echo "Actualizando stage: $ZAPPA_STAGE"
+            .venv/bin/zappa update "$ZAPPA_STAGE" --yes
+          else
+            echo "Desplegando stage: $ZAPPA_STAGE"
+            .venv/bin/zappa deploy "$ZAPPA_STAGE" --yes
+          fi
+
+          # ---- Log rápido para diagnóstico ----
+          .venv/bin/zappa tail "$ZAPPA_STAGE" --since 1m || true
+          EOF
