@@ -7,7 +7,7 @@ Endpoints:
 """
 
 from fastapi.testclient import TestClient
-from app.main import app
+from app import app   # ✅ corregido: antes era from app.main import app
 
 client = TestClient(app)
 
@@ -27,7 +27,8 @@ def test_consulta_endpoint(monkeypatch):
     def fake_query(*args, **kwargs):
         return fake_data
 
-    monkeypatch.setattr("app.main.query_dolar", fake_query)
+    # ✅ corregido: referencia al query_dolar en app.py
+    monkeypatch.setattr("app.query_dolar", fake_query)
 
     response = client.post("/consulta", json={
         "start": "2025-09-05T00:00:00-05:00",
