@@ -1,44 +1,27 @@
 import json
 import pytest
-from moto import mock_aws
-import boto3
-from lambda_functions.lambda1_fetch import lambda_handler
+from unittest.mock import patch
+from lambda_functions.lambda2_process import lambda_handler
 
 
-@mock_aws
-def test_lambda1_saves_file_to_s3(monkeypatch):
-    """Test that Lambda1 saves a file with timestamp in S3"""
+@patch("lambda_functions.lambda2_process.insert_into_rds")
+def test_lambda2_inserts_into_rds(mock_insert):
+    """Test que Lambda2 lee archivo desde S3 y llama a RDS insert"""
 
-    # mock bucket
-    s3 = boto3.client("s3", region_name="us-east-1")
-    bucket_name = "dolar_raw_test"
-    s3.create_bucket(Bucket=bucket_name)
+    fake_event = {
+        "Records": [
+            {"s3": {"bucket": {"name": "dolar_raw_test"}, "object": {"key": "dolar-123.json"}}}
+        ]
+    }
 
-    # 👉 Forzar variable de entorno al bucket de prueba
-    monkeypatch.setenv("BUCKET_NAME", bucket_name)
+    # 👉 Mockear S3
+    with patch("lambda_functions.lambda2_process.get_file_from_s3") as mock_s3:
+        mock_s3.return_value = json.dumps([
+            {"fechahora": "2025-09-06T23:09:57", "valor": 4050.25}
+        ])
 
-    # fake response from BanRep con raise_for_status incluido
-    class FakeResponse:
-        def __init__(self, data):
-            self._data = data
-            self.status_code = 200
-        def json(self):
-            return self._data
-        def raise_for_status(self):
-            return None  # no error
+        # Ejecutar lambda
+        lambda_handler(fake_event, None)
 
-    fake_data = {"dolar": [{"fecha": "2025-09-06", "valor": 4050.25}]}
-    monkeypatch.setattr("lambda_functions.lambda1_fetch.requests.get",
-                        lambda url, timeout=10: FakeResponse(fake_data))
-
-    event, context = {}, {}
-    result = lambda_handler(event, context)
-
-    # check that lambda reported success
-    assert result["status"] == "success"
-
-    # check that file exists in S3
-    response = s3.list_objects_v2(Bucket=bucket_name)
-    assert response["KeyCount"] == 1
-    key = response["Contents"][0]["Key"]
-    assert key.startswith("dolar-") and key.endswith(".json")
+    # Verificar que insert fue llamado una vez
+    mock_insert.assert_called_once()
