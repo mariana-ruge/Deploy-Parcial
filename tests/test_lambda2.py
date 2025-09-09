@@ -5,7 +5,9 @@ This lambda triggers on new S3 files, parses JSON, and inserts into RDS.
 
 import json
 from unittest.mock import patch
+from lambda_functions.lambda1_fetch import lambda_handler
 from lambda_functions.lambda2_process import lambda_handler
+
 
 
 @patch("lambda_functions.lambda2_process.insert_into_rds")
