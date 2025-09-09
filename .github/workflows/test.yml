@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,17 +30,14 @@ jobs:
       - name: Run tests with report
         run: |
           source .venv/bin/activate
-          # Creamos carpeta de reportes
           mkdir -p reports
-          # Ejecutamos pytest y generamos un reporte en HTML
           PYTHONPATH=. pytest -v --html=reports/report.html --self-contained-html
 
       - name: Upload test report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: pytest-report
           path: reports/report.html
-
 
 
 
