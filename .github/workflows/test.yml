@@ -1,7 +1,9 @@
-name: Run Unit Tests
+name: Run Tests
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 jobs:
@@ -9,7 +11,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -20,12 +23,15 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
+          pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest moto boto3 requests
+          pip install pytest moto boto3 pymysql requests
 
       - name: Run tests
         run: |
           source .venv/bin/activate
-          pytest -v
+          # Agregamos el directorio raíz al PYTHONPATH para que encuentre lambda_functions
+          PYTHONPATH=. pytest -v
+
 
 
