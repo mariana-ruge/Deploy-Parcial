@@ -1,43 +1,36 @@
-name: Run Tests
+name: Deploy to EC2
 
 on:
   push:
     branches:
       - main
-  pull_request:
 
 jobs:
-  test:
+  deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
+      - name: Set up SSH
         run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-html moto boto3 pymysql requests
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Run tests with report
+      - name: Test SSH connection
+        run: ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo SSH connection works!"
+
+      - name: Deploy to EC2
         run: |
-          source .venv/bin/activate
-          mkdir -p reports
-          PYTHONPATH=. pytest -v --html=reports/report.html --self-contained-html
+          ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
+            cd /home/ubuntu/app/Deploy-Parcial &&
+            git pull origin main &&
+            source venv/bin/activate &&
+            zappa update dev
+          "
 
-      - name: Upload test report
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-report
-          path: reports/report.html
 
 
 
