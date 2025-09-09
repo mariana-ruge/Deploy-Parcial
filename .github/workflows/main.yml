@@ -2,33 +2,55 @@ name: Deploy to EC2
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+
+concurrency:
+  group: deploy-ec2-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up SSH
+      # Carga la llave privada desde el secreto y la añade al agente SSH
+      - name: Add SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      # Valida que tengamos host y usuario
+      - name: Validate inputs
         run: |
-          mkdir -p ~/.ssh
-          printf "%s" "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          test -n "${{ secrets.EC2_HOST }}" || (echo "EC2_HOST vacío"; exit 1)
+          test -n "${{ secrets.EC2_USER }}" || (echo "EC2_USER vacío"; exit 1)
+
+      # Agrega la huella del host a known_hosts
+      - name: Add host to known_hosts
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Test SSH connection
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo SSH connection works!"
+          ssh -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" "echo 'SSH OK en $(hostname)'"
 
-      - name: Deploy to EC2
+      - name: Deploy
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
-            cd /home/ubuntu/app/Deploy-Parcial &&
-            git pull origin main &&
-            source venv/bin/activate &&
-            zappa update dev
-          "
-
+          ssh -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" 'bash -lc "
+              set -euo pipefail
+              APP_DIR=\"/home/${USER}/app/Deploy-Parcial\"
+              cd \"${APP_DIR}\"
+              git fetch --all --prune
+              git reset --hard origin/main
+              if [ ! -d venv ]; then python3 -m venv venv; fi
+              source venv/bin/activate
+              pip install --upgrade pip
+              [ -f requirements.txt ] && pip install -r requirements.txt || true
+              if ! command -v zappa >/dev/null 2>&1; then pip install zappa; fi
+              if zappa status dev >/dev/null 2>&1; then zappa update dev; else zappa deploy dev; fi
+              echo \"✅ Deploy terminado\"
+            "'
