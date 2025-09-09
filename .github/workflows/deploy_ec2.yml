@@ -1,0 +1,126 @@
+name: Tests & Deploy via EC2 (Zappa)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-html moto boto3 pymysql requests
+
+      - name: Run tests with report
+        run: |
+          source .venv/bin/activate
+          mkdir -p reports
+          PYTHONPATH=. pytest -v --html=reports/report.html --self-contained-html
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: reports/report.html
+
+  deploy:
+    # Despliega solo si los tests pasan y el push es a main
+    if: github.ref == 'refs/heads/main'
+    needs: [test]
+    runs-on: ubuntu-latest
+
+    env:
+      # Puedes cambiar el stage aquí o definirlo como Action variable (Repository → Variables)
+      ZAPPA_STAGE: ${{ vars.ZAPPA_STAGE || 'prod' }}
+
+    steps:
+      - name: Checkout (for metadata only)
+        uses: actions/checkout@v4
+
+      - name: Set up SSH to EC2
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo '✅ SSH OK on EC2'"
+
+      - name: Remote deploy on EC2 with Zappa
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          PROJECT_DIR: ${{ secrets.EC2_PROJECT_DIR }}          # ej: /opt/myapp
+          REPO_SSH: ${{ secrets.REPO_SSH }}                    # ej: git@github.com:owner/repo.git
+          ZAPPA_STAGE: ${{ vars.ZAPPA_STAGE || 'prod' }}
+        run: |
+          ssh -i ~/.ssh/id_rsa "$EC2_USER@$EC2_HOST" <<'EOF'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Paquetes básicos (Ubuntu/Debian). Ajusta si usas Amazon Linux.
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y git python3-venv python3-pip
+          elif command -v yum >/dev/null 2>&1; then
+            sudo yum install -y git python3-pip
+            # En Amazon Linux 2, venv suele venir con python3
+            python3 -m pip install --upgrade pip
+          fi
+
+          # Directorio del proyecto
+          mkdir -p "$PROJECT_DIR"
+          cd "$PROJECT_DIR"
+
+          # Clonar si no existe repo; si existe, asegurar URL y hacer pull
+          if [ ! -d .git ]; then
+            echo "Clonando repo en $PROJECT_DIR ..."
+            git clone "$REPO_SSH" .
+          else
+            echo "Repo ya existe; asegurando remote origin..."
+            git remote set-url origin "$REPO_SSH"
+          fi
+
+          # Pull limpio a main
+          git fetch origin
+          git checkout main
+          git pull --ff-only origin main
+
+          # Virtualenv e instalación
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          pip install "zappa>=0.56"
+
+          # Desplegar/Actualizar con Zappa
+          # Las credenciales de AWS deben venir del rol IAM de la EC2
+          if zappa status "$ZAPPA_STAGE" >/dev/null 2>&1; then
+            echo "Actualizando Zappa stage: $ZAPPA_STAGE"
+            zappa update "$ZAPPA_STAGE" --yes
+          else
+            echo "Desplegando Zappa stage: $ZAPPA_STAGE"
+            zappa deploy "$ZAPPA_STAGE" --yes
+          fi
+
+          # Log breve para diagnóstico (no bloquea)
+          zappa tail "$ZAPPA_STAGE" --since 1m || true
+          EOF
