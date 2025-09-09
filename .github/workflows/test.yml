@@ -2,17 +2,14 @@ name: Run Unit Tests
 
 on:
   push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,13 +20,12 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest httpx moto
+          pip install pytest moto boto3 requests
 
-      - name: Run pytest
+      - name: Run tests
         run: |
           source .venv/bin/activate
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
-          pytest -v --maxfail=1 --disable-warnings
+          pytest -v
+
 
