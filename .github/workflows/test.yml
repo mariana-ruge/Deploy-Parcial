@@ -2,34 +2,100 @@ name: Deploy to EC2
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+
+# Evita despliegues en paralelo de la misma rama
+concurrency:
+  group: deploy-ec2-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      # Si usas Zappa, define estas secrets en el repo:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up SSH
+      # Carga la llave privada desde secrets y la agrega al ssh-agent
+      - name: Add SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      # Asegura la huella del host (EC2) en known_hosts
+      - name: Add EC2 host to known_hosts
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Test SSH connection
-        run: ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo SSH connection works!"
+        run: |
+          ssh -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "echo 'SSH connection works on $(hostname)'"
 
       - name: Deploy to EC2
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
-            cd /home/ubuntu/app/Deploy-Parcial &&
-            git pull origin main &&
-            source venv/bin/activate &&
-            zappa update dev
-          "
+          ssh -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" 'bash -lc "
+              set -euo pipefail
+
+              # Ruta del proyecto en la EC2
+              APP_DIR=\"/home/${USER}/app/Deploy-Parcial\"
+              if [ ! -d \"${APP_DIR}\" ]; then
+                echo \"ERROR: ${APP_DIR} no existe en la EC2.\"
+                echo \"Crea el directorio y clona el repo allí, o ajusta APP_DIR.\"
+                exit 1
+              fi
+
+              cd \"${APP_DIR}\"
+
+              # Asegura que el remote apunte al repo correcto (opcional)
+              if git remote get-url origin >/dev/null 2>&1; then
+                git remote set-url origin git@github.com:mariana-ruge/Deploy-Parcial.git || true
+              fi
+
+              # Sin merges: trae y deja el árbol EXACTO como origin/main
+              git fetch --all --prune
+              git reset --hard origin/main
+
+              # Python venv
+              if [ ! -d venv ]; then
+                python3 -m venv venv
+              fi
+              source venv/bin/activate
+
+              # Dependencias
+              pip install --upgrade pip
+              if [ -f requirements.txt ]; then
+                pip install -r requirements.txt
+              fi
+
+              # Zappa (instálalo si no está) y despliegue
+              if ! command -v zappa >/dev/null 2>&1; then
+                pip install zappa
+              fi
+
+              # Si ya existe el stack: update; si no, deploy
+              if zappa status dev >/dev/null 2>&1; then
+                zappa update dev
+              else
+                zappa deploy dev
+              fi
+
+              echo \"✅ Deploy terminado\"
+            "'
+
 
 
 
