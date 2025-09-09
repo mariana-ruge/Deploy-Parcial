@@ -25,13 +25,22 @@ jobs:
           source .venv/bin/activate
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest moto boto3 pymysql requests
+          pip install pytest pytest-html moto boto3 pymysql requests
 
-      - name: Run tests
+      - name: Run tests with report
         run: |
           source .venv/bin/activate
-          # Agregamos el directorio raíz al PYTHONPATH para que encuentre lambda_functions
-          PYTHONPATH=. pytest -v
+          # Creamos carpeta de reportes
+          mkdir -p reports
+          # Ejecutamos pytest y generamos un reporte en HTML
+          PYTHONPATH=. pytest -v --html=reports/report.html --self-contained-html
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v3
+        with:
+          name: pytest-report
+          path: reports/report.html
+
 
 
 
