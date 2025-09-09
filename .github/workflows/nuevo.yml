@@ -1,0 +1,71 @@
+name: Run Tests (with artifacts)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run tests and export report
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-html moto boto3 pymysql requests
+
+      - name: Run tests with report
+        run: |
+          source .venv/bin/activate
+          mkdir -p reports
+          PYTHONPATH=. pytest -v --html=reports/report.html --self-contained-html
+
+      # === Artefactos descargables ===
+      - name: Build ZIP from repo (HEAD)
+        run: |
+          git archive -o build-${{ github.sha }}.zip HEAD
+
+      - name: Package test report
+        run: |
+          cp reports/report.html test-report-${{ github.sha }}.html
+          zip -j test-report-${{ github.sha }}.zip reports/report.html
+
+      - name: Upload artifacts (build + reports)
+        uses: actions/upload-artifact@v4
+        with:
+          name: outputs-${{ github.sha }}
+          path: |
+            build-${{ github.sha }}.zip
+            test-report-${{ github.sha }}.html
+            test-report-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      # === (Opcional) Publicar assets en un Release si hay tag ===
+      - name: Publish Release assets (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            build-${{ github.sha }}.zip
+            test-report-${{ github.sha }}.html
+            test-report-${{ github.sha }}.zip
+
