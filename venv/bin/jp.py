@@ -1,4 +1,4 @@
-#!/home/ubuntu/environment/Parcial_Big_data_1/venv/bin/python
+#!/home/ubuntu/app/Deploy-Parcial/venv/bin/python
 
 import sys
 import json
